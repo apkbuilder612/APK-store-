@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Globe, Loader2, CheckCircle2, Image as ImageIcon } from "lucide-react";
 
@@ -17,6 +17,10 @@ interface DeveloperProfile {
 export default function SubmitPwaPage() {
   const supabase = createClient();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const prefillName = searchParams.get("name");
+  const prefillDeveloperId = searchParams.get("developerId");
+  const isEditMode = !!prefillName;
 
   const [checking, setChecking] = useState(true);
   const [isDeveloper, setIsDeveloper] = useState(false);
@@ -57,7 +61,30 @@ export default function SubmitPwaPage() {
         .select("id, name")
         .eq("owner_id", user.id);
       setDevelopers(devs ?? []);
-      if (devs && devs.length > 0) setDeveloperId(devs[0].id);
+
+      if (prefillDeveloperId) {
+        setDeveloperId(prefillDeveloperId);
+      } else if (devs && devs.length > 0) {
+        setDeveloperId(devs[0].id);
+      }
+
+      if (prefillName) {
+        setName(prefillName);
+        // Load existing values so editing doesn't wipe fields the user
+        // isn't touching this time (e.g. description, existing URL).
+        const { data: existing } = await supabase
+          .from("pwas")
+          .select("short_name, description, website_url, version, category_id")
+          .eq("name", prefillName)
+          .maybeSingle();
+        if (existing) {
+          setShortName(existing.short_name ?? "");
+          setDescription(existing.description ?? "");
+          setWebsiteUrl(existing.website_url ?? "");
+          setVersion(existing.version ?? "");
+          setCategoryId(existing.category_id ?? "");
+        }
+      }
 
       const { data: cats } = await supabase.from("categories").select("id, name").order("name");
       setCategories(cats ?? []);
@@ -149,7 +176,7 @@ export default function SubmitPwaPage() {
       });
       const json = await res.json();
       if (!res.ok) {
-        setError(json.error ?? "Could not add PWA.");
+        setError(json.error ?? "Could not save PWA.");
         setStatus("error");
         return;
       }
@@ -186,7 +213,7 @@ export default function SubmitPwaPage() {
     return (
       <div className="px-6 pt-16 text-center">
         <CheckCircle2 size={36} className="mx-auto text-emerald-500 mb-3" />
-        <h1 className="text-lg font-semibold mb-1">Published</h1>
+        <h1 className="text-lg font-semibold mb-1">{isEditMode ? "Updated" : "Published"}</h1>
         <p className="text-sm text-neutral-500">Your PWA is now live in the store.</p>
       </div>
     );
@@ -194,10 +221,12 @@ export default function SubmitPwaPage() {
 
   return (
     <div className="px-4 pt-6 pb-10">
-      <h1 className="text-xl font-bold mb-1">Add a PWA</h1>
-      <p className="text-xs text-neutral-500 mb-4">
-        If you don't upload an icon, we'll try to detect one automatically from the site's own manifest.
-      </p>
+      <h1 className="text-xl font-bold mb-1">{isEditMode ? `Edit ${prefillName}` : "Add a PWA"}</h1>
+      {!isEditMode && (
+        <p className="text-xs text-neutral-500 mb-4">
+          If you don't upload an icon, we'll try to detect one automatically from the site's own manifest.
+        </p>
+      )}
       <form onSubmit={handleSubmit} className="space-y-3">
         <div className="flex gap-3 items-center">
           <label className="shrink-0 h-16 w-16 rounded-2xl border-2 border-dashed border-black/10 dark:border-white/15 flex items-center justify-center overflow-hidden bg-neutral-50 dark:bg-neutral-900">
@@ -215,13 +244,11 @@ export default function SubmitPwaPage() {
             )}
           </label>
           <div className="text-xs text-neutral-500">
-            App icon (optional)
-            <br />
-            Leave empty to auto-detect
+            App icon {isEditMode ? "(optional — leave empty to keep current)" : "(optional)"}
           </div>
         </div>
 
-        {developers.length > 1 && (
+        {developers.length > 1 && !isEditMode && (
           <Select label="Publish as" value={developerId} onChange={setDeveloperId}>
             {developers.map((d) => (
               <option key={d.id} value={d.id}>
@@ -231,7 +258,7 @@ export default function SubmitPwaPage() {
           </Select>
         )}
 
-        <Field label="App name" value={name} onChange={setName} required />
+        <Field label="App name" value={name} onChange={setName} required disabled={isEditMode} />
         <Field label="Short name" value={shortName} onChange={setShortName} />
         <Field label="Website URL (https://...)" value={websiteUrl} onChange={setWebsiteUrl} required />
         <Field label="Version (optional)" value={version} onChange={setVersion} />
@@ -255,7 +282,7 @@ export default function SubmitPwaPage() {
           className="w-full flex items-center justify-center gap-2 rounded-2xl bg-brand-600 text-white font-semibold py-3 disabled:opacity-70"
         >
           {status === "submitting" && <Loader2 size={18} className="animate-spin" />}
-          Submit
+          {isEditMode ? "Save changes" : "Submit"}
         </button>
       </form>
     </div>
@@ -267,11 +294,13 @@ function Field({
   value,
   onChange,
   required,
+  disabled,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   required?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <label className="block">
@@ -279,8 +308,9 @@ function Field({
       <input
         value={value}
         required={required}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand-500"
+        className="mt-1 w-full rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-60"
       />
     </label>
   );
@@ -331,4 +361,4 @@ function Select({
       </select>
     </label>
   );
-    }
+          }
