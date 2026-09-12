@@ -36,6 +36,7 @@ export default function UploadPage() {
 
   const [status, setStatus] = useState<"idle" | "submitting" | "done" | "error">("idle");
   const [progress, setProgress] = useState(0);
+  const [phase, setPhase] = useState<"upload" | "process">("upload");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -91,37 +92,49 @@ export default function UploadPage() {
     setDeveloperId(dev.id);
   }
 
-  // Uses XMLHttpRequest instead of fetch so we get real upload progress
-  // events (fetch has no cross-browser upload-progress API yet).
-  function uploadWithProgress(form: FormData): Promise<{ ok: boolean; data: any }> {
+  // Uploads the raw APK straight to Supabase Storage from the browser,
+  // bypassing our own server entirely for the large binary (Vercel's
+  // function body-size cap doesn't apply to this request since it never
+  // touches our server). Returns the storage path on success.
+  function uploadFileDirectToStorage(
+    theFile: File,
+    userId: string,
+    accessToken: string
+  ): Promise<string> {
     return new Promise((resolve, reject) => {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+      const filePath = `${userId}/uploads/${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2)}.apk`;
+
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", "/api/upload");
+      xhr.open("POST", `${supabaseUrl}/storage/v1/object/apk-files/${filePath}`);
+      xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+      xhr.setRequestHeader("apikey", anonKey);
+      xhr.setRequestHeader("Content-Type", "application/vnd.android.package-archive");
 
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) {
-          // Upload itself is 0-90%; leave the last 10% for server-side
-          // processing (hashing + validation + DB writes) so the bar
-          // doesn't sit frozen at 100% while the server is still working.
-          const pct = Math.round((event.loaded / event.total) * 90);
-          setProgress(pct);
+          // Uploading to storage is 0-85%; the remaining 15% covers the
+          // server downloading it back down to validate + write DB rows.
+          setPhase("upload");
+          setProgress(Math.round((event.loaded / event.total) * 85));
         }
       };
 
       xhr.onload = () => {
-        setProgress(100);
-        let data: any = {};
-        try {
-          data = JSON.parse(xhr.responseText);
-        } catch {
-          data = { error: "Unexpected server response." };
+        if (xhr.status >= 200 && xhr.status < 300) {
+          setPhase("process");
+          setProgress(90);
+          resolve(filePath);
+        } else {
+          reject(new Error("Could not upload file to storage."));
         }
-        resolve({ ok: xhr.status >= 200 && xhr.status < 300, data });
       };
 
-      xhr.onerror = () => reject(new Error("Network error during upload."));
-
-      xhr.send(form);
+      xhr.onerror = () => reject(new Error("Network error during file upload."));
+      xhr.send(theFile);
     });
   }
 
@@ -132,30 +145,53 @@ export default function UploadPage() {
       return;
     }
     setStatus("submitting");
-    setProgress(1); // show immediate feedback instead of sitting at 0
+    setPhase("upload");
+    setProgress(1);
     setError(null);
 
-    const form = new FormData();
-    form.set("apk", file);
-    form.set("name", name);
-    form.set("shortName", shortName);
-    form.set("description", description);
-    form.set("version", version);
-    form.set("changelog", changelog);
-    form.set("categoryId", categoryId);
-    form.set("developerId", developerId);
-    form.set("minAndroidVersion", minAndroid);
-
     try {
-      const { ok, data } = await uploadWithProgress(form);
-      if (!ok) {
-        setError(data.error ?? "Upload failed.");
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!session || !user) {
+        setError("Please sign in again.");
+        setStatus("error");
+        return;
+      }
+
+      const filePath = await uploadFileDirectToStorage(file, user.id, session.access_token);
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filePath,
+          name,
+          shortName,
+          description,
+          version,
+          changelog,
+          categoryId,
+          developerId,
+          minAndroidVersion: minAndroid,
+        }),
+      });
+
+      const json = await res.json();
+      setProgress(100);
+
+      if (!res.ok) {
+        setError(json.error ?? "Upload failed.");
         setStatus("error");
         return;
       }
       setStatus("done");
-    } catch {
-      setError("Network error during upload.");
+    } catch (err: any) {
+      setError(err?.message ?? "Upload failed.");
       setStatus("error");
     }
   }
@@ -254,11 +290,7 @@ export default function UploadPage() {
               />
             </div>
             <p className="text-xs text-neutral-500 text-center">
-              {progress < 90
-                ? `Uploading... ${progress}%`
-                : progress < 100
-                ? "Processing on server..."
-                : "Finishing up..."}
+              {phase === "upload" ? `Uploading... ${progress}%` : `Processing... ${progress}%`}
             </p>
           </div>
         )}
@@ -348,4 +380,4 @@ function Select({
       </select>
     </label>
   );
-  }
+            }
