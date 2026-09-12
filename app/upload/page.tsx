@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { UploadCloud, Loader2, CheckCircle2, Image as ImageIcon } from "lucide-react";
 import { formatBytes } from "@/lib/format";
@@ -18,6 +18,10 @@ interface DeveloperProfile {
 export default function UploadPage() {
   const supabase = createClient();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const prefillName = searchParams.get("name");
+  const prefillDeveloperId = searchParams.get("developerId");
+  const isNewVersionMode = !!prefillName;
 
   const [checking, setChecking] = useState(true);
   const [isDeveloper, setIsDeveloper] = useState(false);
@@ -62,7 +66,14 @@ export default function UploadPage() {
         .select("id, name")
         .eq("owner_id", user.id);
       setDevelopers(devs ?? []);
-      if (devs && devs.length > 0) setDeveloperId(devs[0].id);
+
+      if (prefillDeveloperId) {
+        setDeveloperId(prefillDeveloperId);
+      } else if (devs && devs.length > 0) {
+        setDeveloperId(devs[0].id);
+      }
+
+      if (prefillName) setName(prefillName);
 
       const { data: cats } = await supabase.from("categories").select("id, name").order("name");
       setCategories(cats ?? []);
@@ -96,55 +107,7 @@ export default function UploadPage() {
 
   function handleIconChange(f: File | null) {
     setIcon(f);
-    if (f) {
-      setIconPreview(URL.createObjectURL(f));
-    } else {
-      setIconPreview(null);
-    }
-  }
-
-  // Shared helper: uploads any file straight to a Supabase Storage bucket
-  // from the browser (bypasses Vercel's function body-size limit) with
-  // upload-progress reporting.
-  function uploadDirectToStorage(
-    theFile: File,
-    bucket: string,
-    userId: string,
-    accessToken: string,
-    contentType: string,
-    onProgress: (pct: number) => void
-  ): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-      const ext = theFile.name.split(".").pop() || "bin";
-      const filePath = `${userId}/uploads/${Date.now()}-${Math.random()
-        .toString(36)
-        .slice(2)}.${ext}`;
-
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", `${supabaseUrl}/storage/v1/object/${bucket}/${filePath}`);
-      xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
-      xhr.setRequestHeader("apikey", anonKey);
-      xhr.setRequestHeader("Content-Type", contentType);
-
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          onProgress(Math.round((event.loaded / event.total) * 100));
-        }
-      };
-
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          resolve(filePath);
-        } else {
-          reject(new Error(`Could not upload to ${bucket}.`));
-        }
-      };
-
-      xhr.onerror = () => reject(new Error("Network error during upload."));
-      xhr.send(theFile);
-    });
+    setIconPreview(f ? URL.createObjectURL(f) : null);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -171,22 +134,31 @@ export default function UploadPage() {
         return;
       }
 
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
       let iconPath: string | null = null;
       if (icon) {
         setPhase("icon");
-        iconPath = await uploadDirectToStorage(
-          icon,
-          "icons",
-          user.id,
-          session.access_token,
-          icon.type || "image/png",
-          (pct) => setProgress(Math.round(pct * 0.15)) // icon = first 15%
-        );
+        const iconExt = icon.name.split(".").pop() || "png";
+        const iconFilePath = `${user.id}/uploads/${Date.now()}-${Math.random().toString(36).slice(2)}.${iconExt}`;
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", `${supabaseUrl}/storage/v1/object/icons/${iconFilePath}`);
+          xhr.setRequestHeader("Authorization", `Bearer ${session.access_token}`);
+          xhr.setRequestHeader("apikey", anonKey);
+          xhr.setRequestHeader("Content-Type", icon.type || "image/png");
+          xhr.upload.onprogress = (ev) => {
+            if (ev.lengthComputable) setProgress(Math.round((ev.loaded / ev.total) * 15));
+          };
+          xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error("Icon upload failed.")));
+          xhr.onerror = () => reject(new Error("Network error uploading icon."));
+          xhr.send(icon);
+        });
+        iconPath = iconFilePath;
       }
 
       setPhase("upload");
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
       const filePath = `${user.id}/uploads/${Date.now()}-${Math.random().toString(36).slice(2)}.apk`;
 
       await new Promise<void>((resolve, reject) => {
@@ -195,18 +167,14 @@ export default function UploadPage() {
         xhr.setRequestHeader("Authorization", `Bearer ${session.access_token}`);
         xhr.setRequestHeader("apikey", anonKey);
         xhr.setRequestHeader("Content-Type", "application/vnd.android.package-archive");
-
-        xhr.upload.onprogress = (event) => {
-          if (event.lengthComputable) {
+        xhr.upload.onprogress = (ev) => {
+          if (ev.lengthComputable) {
             const base = icon ? 15 : 0;
             const span = icon ? 70 : 85;
-            setProgress(base + Math.round((event.loaded / event.total) * span));
+            setProgress(base + Math.round((ev.loaded / ev.total) * span));
           }
         };
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) resolve();
-          else reject(new Error("Could not upload APK file."));
-        };
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error("Could not upload APK file.")));
         xhr.onerror = () => reject(new Error("Network error during file upload."));
         xhr.send(file);
       });
@@ -272,20 +240,24 @@ export default function UploadPage() {
     return (
       <div className="px-6 pt-16 text-center">
         <CheckCircle2 size={36} className="mx-auto text-emerald-500 mb-3" />
-        <h1 className="text-lg font-semibold mb-1">Published</h1>
-        <p className="text-sm text-neutral-500">
-          Your app is now live in the store.
-        </p>
+        <h1 className="text-lg font-semibold mb-1">
+          {isNewVersionMode ? "Version published" : "Published"}
+        </h1>
+        <p className="text-sm text-neutral-500">Your app is now live in the store.</p>
       </div>
     );
   }
 
   return (
     <div className="px-4 pt-6 pb-10">
-      <h1 className="text-xl font-bold mb-1">Upload APK</h1>
-      <p className="text-xs text-neutral-500 mb-4">
-        To update an existing app later, use the exact same App name and a higher version number.
-      </p>
+      <h1 className="text-xl font-bold mb-1">
+        {isNewVersionMode ? `Update ${prefillName}` : "Upload APK"}
+      </h1>
+      {!isNewVersionMode && (
+        <p className="text-xs text-neutral-500 mb-4">
+          To update an existing app later, use the exact same App name and a higher version number.
+        </p>
+      )}
       <form onSubmit={handleSubmit} className="space-y-3">
         <div className="flex gap-3 items-center">
           <label className="shrink-0 h-16 w-16 rounded-2xl border-2 border-dashed border-black/10 dark:border-white/15 flex items-center justify-center overflow-hidden bg-neutral-50 dark:bg-neutral-900">
@@ -304,9 +276,7 @@ export default function UploadPage() {
             )}
           </label>
           <div className="text-xs text-neutral-500">
-            App icon (optional)
-            <br />
-            Square image works best
+            App icon {isNewVersionMode ? "(optional — leave empty to keep current)" : "(optional)"}
           </div>
         </div>
 
@@ -328,7 +298,7 @@ export default function UploadPage() {
           )}
         </label>
 
-        {developers.length > 1 && (
+        {developers.length > 1 && !isNewVersionMode && (
           <Select label="Publish as" value={developerId} onChange={setDeveloperId}>
             {developers.map((d) => (
               <option key={d.id} value={d.id}>
@@ -338,21 +308,35 @@ export default function UploadPage() {
           </Select>
         )}
 
-        <Field label="App name" value={name} onChange={setName} required disabled={status === "submitting"} />
-        <Field label="Short name" value={shortName} onChange={setShortName} disabled={status === "submitting"} />
+        <Field
+          label="App name"
+          value={name}
+          onChange={setName}
+          required
+          disabled={status === "submitting" || isNewVersionMode}
+        />
+        {!isNewVersionMode && (
+          <Field label="Short name" value={shortName} onChange={setShortName} disabled={status === "submitting"} />
+        )}
         <Field label="Version (e.g. 1.0.0)" value={version} onChange={setVersion} required disabled={status === "submitting"} />
-        <Field label="Minimum Android version" value={minAndroid} onChange={setMinAndroid} disabled={status === "submitting"} />
+        {!isNewVersionMode && (
+          <Field label="Minimum Android version" value={minAndroid} onChange={setMinAndroid} disabled={status === "submitting"} />
+        )}
 
-        <Select label="Category" value={categoryId} onChange={setCategoryId}>
-          <option value="">Uncategorized</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </Select>
+        {!isNewVersionMode && (
+          <Select label="Category" value={categoryId} onChange={setCategoryId}>
+            <option value="">Uncategorized</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
+        )}
 
-        <TextArea label="Description" value={description} onChange={setDescription} />
+        {!isNewVersionMode && (
+          <TextArea label="Description" value={description} onChange={setDescription} />
+        )}
         <TextArea label="Changelog" value={changelog} onChange={setChangelog} />
 
         {error && <p className="text-sm text-rose-500">{error}</p>}
@@ -377,7 +361,7 @@ export default function UploadPage() {
           className="w-full flex items-center justify-center gap-2 rounded-2xl bg-brand-600 text-white font-semibold py-3 disabled:opacity-70"
         >
           {status === "submitting" && <Loader2 size={18} className="animate-spin" />}
-          {status === "submitting" ? `${progress}%` : "Submit"}
+          {status === "submitting" ? `${progress}%` : isNewVersionMode ? "Publish version" : "Submit"}
         </button>
       </form>
     </div>
