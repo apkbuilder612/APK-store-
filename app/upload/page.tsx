@@ -35,6 +35,7 @@ export default function UploadPage() {
   const [minAndroid, setMinAndroid] = useState("");
 
   const [status, setStatus] = useState<"idle" | "submitting" | "done" | "error">("idle");
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -90,6 +91,40 @@ export default function UploadPage() {
     setDeveloperId(dev.id);
   }
 
+  // Uses XMLHttpRequest instead of fetch so we get real upload progress
+  // events (fetch has no cross-browser upload-progress API yet).
+  function uploadWithProgress(form: FormData): Promise<{ ok: boolean; data: any }> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/upload");
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          // Upload itself is 0-90%; leave the last 10% for server-side
+          // processing (hashing + validation + DB writes) so the bar
+          // doesn't sit frozen at 100% while the server is still working.
+          const pct = Math.round((event.loaded / event.total) * 90);
+          setProgress(pct);
+        }
+      };
+
+      xhr.onload = () => {
+        setProgress(100);
+        let data: any = {};
+        try {
+          data = JSON.parse(xhr.responseText);
+        } catch {
+          data = { error: "Unexpected server response." };
+        }
+        resolve({ ok: xhr.status >= 200 && xhr.status < 300, data });
+      };
+
+      xhr.onerror = () => reject(new Error("Network error during upload."));
+
+      xhr.send(form);
+    });
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!file) {
@@ -97,11 +132,8 @@ export default function UploadPage() {
       return;
     }
     setStatus("submitting");
+    setProgress(1); // show immediate feedback instead of sitting at 0
     setError(null);
-
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
 
     const form = new FormData();
     form.set("apk", file);
@@ -115,14 +147,9 @@ export default function UploadPage() {
     form.set("minAndroidVersion", minAndroid);
 
     try {
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: form,
-        headers: session ? { Authorization: `Bearer ${session.access_token}` } : undefined,
-      });
-      const json = await res.json();
-      if (!res.ok) {
-        setError(json.error ?? "Upload failed.");
+      const { ok, data } = await uploadWithProgress(form);
+      if (!ok) {
+        setError(data.error ?? "Upload failed.");
         setStatus("error");
         return;
       }
@@ -176,6 +203,7 @@ export default function UploadPage() {
             type="file"
             accept=".apk"
             className="hidden"
+            disabled={status === "submitting"}
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           />
           <UploadCloud size={26} className="mx-auto text-neutral-400 mb-2" />
@@ -198,10 +226,10 @@ export default function UploadPage() {
           </Select>
         )}
 
-        <Field label="App name" value={name} onChange={setName} required />
-        <Field label="Short name" value={shortName} onChange={setShortName} />
-        <Field label="Version (e.g. 1.0.0)" value={version} onChange={setVersion} required />
-        <Field label="Minimum Android version" value={minAndroid} onChange={setMinAndroid} />
+        <Field label="App name" value={name} onChange={setName} required disabled={status === "submitting"} />
+        <Field label="Short name" value={shortName} onChange={setShortName} disabled={status === "submitting"} />
+        <Field label="Version (e.g. 1.0.0)" value={version} onChange={setVersion} required disabled={status === "submitting"} />
+        <Field label="Minimum Android version" value={minAndroid} onChange={setMinAndroid} disabled={status === "submitting"} />
 
         <Select label="Category" value={categoryId} onChange={setCategoryId}>
           <option value="">Uncategorized</option>
@@ -217,13 +245,31 @@ export default function UploadPage() {
 
         {error && <p className="text-sm text-rose-500">{error}</p>}
 
+        {status === "submitting" && (
+          <div className="space-y-1.5">
+            <div className="h-2.5 w-full rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-brand-600 transition-all duration-200 ease-out"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="text-xs text-neutral-500 text-center">
+              {progress < 90
+                ? `Uploading... ${progress}%`
+                : progress < 100
+                ? "Processing on server..."
+                : "Finishing up..."}
+            </p>
+          </div>
+        )}
+
         <button
           type="submit"
           disabled={status === "submitting"}
           className="w-full flex items-center justify-center gap-2 rounded-2xl bg-brand-600 text-white font-semibold py-3 disabled:opacity-70"
         >
           {status === "submitting" && <Loader2 size={18} className="animate-spin" />}
-          Submit for review
+          {status === "submitting" ? `${progress}%` : "Submit for review"}
         </button>
       </form>
     </div>
@@ -235,11 +281,13 @@ function Field({
   value,
   onChange,
   required,
+  disabled,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   required?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <label className="block">
@@ -247,8 +295,9 @@ function Field({
       <input
         value={value}
         required={required}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand-500"
+        className="mt-1 w-full rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-60"
       />
     </label>
   );
@@ -299,4 +348,4 @@ function Select({
       </select>
     </label>
   );
-}
+  }
