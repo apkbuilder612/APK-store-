@@ -36,6 +36,35 @@ export async function POST(request: NextRequest) {
 
   const slug = String(name).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
+  const { data: existing } = await admin
+    .from("pwas")
+    .select("id")
+    .eq("developer_id", developerId)
+    .eq("slug", slug)
+    .maybeSingle();
+
+  if (existing) {
+    // Same name + developer = updating an existing PWA entry.
+    const { error: updateError } = await admin
+      .from("pwas")
+      .update({
+        name,
+        short_name: shortName || null,
+        description: description || null,
+        website_url: validation.normalized,
+        version: version || null,
+        category_id: categoryId || null,
+        status: "approved",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id);
+
+    if (updateError) {
+      return NextResponse.json({ error: "Could not update PWA." }, { status: 500 });
+    }
+    return NextResponse.json({ success: true, pwaId: existing.id });
+  }
+
   const { data: pwa, error } = await admin
     .from("pwas")
     .insert({
@@ -47,7 +76,7 @@ export async function POST(request: NextRequest) {
       website_url: validation.normalized,
       version: version || null,
       category_id: categoryId || null,
-      status: "pending",
+      status: "approved",
     })
     .select("id")
     .single();
