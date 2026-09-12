@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { Globe, Loader2, CheckCircle2 } from "lucide-react";
+import { Globe, Loader2, CheckCircle2, Image as ImageIcon } from "lucide-react";
 
 interface Category {
   id: string;
@@ -30,6 +30,8 @@ export default function SubmitPwaPage() {
   const [version, setVersion] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [developerId, setDeveloperId] = useState("");
+  const [icon, setIcon] = useState<File | null>(null);
+  const [iconPreview, setIconPreview] = useState<string | null>(null);
 
   const [status, setStatus] = useState<"idle" | "submitting" | "done" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -87,11 +89,50 @@ export default function SubmitPwaPage() {
     setDeveloperId(dev.id);
   }
 
+  function handleIconChange(f: File | null) {
+    setIcon(f);
+    setIconPreview(f ? URL.createObjectURL(f) : null);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setStatus("submitting");
     setError(null);
     try {
+      let iconPath: string | null = null;
+
+      if (icon) {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!session || !user) {
+          setError("Please sign in again.");
+          setStatus("error");
+          return;
+        }
+
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+        const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+        const ext = icon.name.split(".").pop() || "png";
+        const filePath = `${user.id}/uploads/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", `${supabaseUrl}/storage/v1/object/icons/${filePath}`);
+          xhr.setRequestHeader("Authorization", `Bearer ${session.access_token}`);
+          xhr.setRequestHeader("apikey", anonKey);
+          xhr.setRequestHeader("Content-Type", icon.type || "image/png");
+          xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject());
+          xhr.onerror = () => reject();
+          xhr.send(icon);
+        });
+
+        iconPath = filePath;
+      }
+
       const res = await fetch("/api/pwa", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -103,6 +144,7 @@ export default function SubmitPwaPage() {
           version,
           categoryId,
           developerId,
+          iconPath,
         }),
       });
       const json = await res.json();
@@ -152,8 +194,33 @@ export default function SubmitPwaPage() {
 
   return (
     <div className="px-4 pt-6 pb-10">
-      <h1 className="text-xl font-bold mb-4">Add a PWA</h1>
+      <h1 className="text-xl font-bold mb-1">Add a PWA</h1>
+      <p className="text-xs text-neutral-500 mb-4">
+        If you don't upload an icon, we'll try to detect one automatically from the site's own manifest.
+      </p>
       <form onSubmit={handleSubmit} className="space-y-3">
+        <div className="flex gap-3 items-center">
+          <label className="shrink-0 h-16 w-16 rounded-2xl border-2 border-dashed border-black/10 dark:border-white/15 flex items-center justify-center overflow-hidden bg-neutral-50 dark:bg-neutral-900">
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => handleIconChange(e.target.files?.[0] ?? null)}
+            />
+            {iconPreview ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={iconPreview} alt="Icon preview" className="h-full w-full object-cover" />
+            ) : (
+              <ImageIcon size={22} className="text-neutral-400" />
+            )}
+          </label>
+          <div className="text-xs text-neutral-500">
+            App icon (optional)
+            <br />
+            Leave empty to auto-detect
+          </div>
+        </div>
+
         {developers.length > 1 && (
           <Select label="Publish as" value={developerId} onChange={setDeveloperId}>
             {developers.map((d) => (
@@ -264,4 +331,4 @@ function Select({
       </select>
     </label>
   );
-     }
+    }
