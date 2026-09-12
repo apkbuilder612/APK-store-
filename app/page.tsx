@@ -23,10 +23,31 @@ export default async function HomePage() {
   const hasAnything =
     featured.length + recentlyAdded.length + recentlyUpdated.length + popular.length > 0;
 
+  // Same app can qualify for more than one section (e.g. the only app in
+  // the store is trivially "featured", "recently added" and "recently
+  // updated" at once). Show each app only once, in its highest-priority
+  // section, like a real store would.
+  const seen = new Set<string>();
+  function dedupe(items: any[]) {
+    return items.filter((item: any) => {
+      if (seen.has(item.slug)) return false;
+      seen.add(item.slug);
+      return true;
+    });
+  }
+
+  const featuredDeduped = dedupe(featured as any[]);
+  const recentlyAddedDeduped = dedupe(recentlyAdded as any[]);
+  const recentlyUpdatedDeduped = dedupe(recentlyUpdated as any[]);
+  const popularDeduped = dedupe(popular as any[]);
+
   return (
     <div className="px-4 pt-4 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">APK Store</h1>
+        <Link href="/upload" className="text-sm font-medium text-brand-600">
+          + Upload
+        </Link>
       </div>
 
       <SearchBar />
@@ -55,10 +76,10 @@ export default async function HomePage() {
         </div>
       )}
 
-      <AppSection title="Featured" items={featured as any} basePath="apk" />
-      <AppSection title="Recently added" items={recentlyAdded as any} basePath="apk" />
-      <AppSection title="Recently updated" items={recentlyUpdated as any} basePath="apk" />
-      <AppSection title="Popular" items={popular as any} basePath="apk" />
+      <AppSection title="Featured" items={featuredDeduped as any} basePath="apk" />
+      <AppSection title="Recently added" items={recentlyAddedDeduped as any} basePath="apk" />
+      <AppSection title="Recently updated" items={recentlyUpdatedDeduped as any} basePath="apk" />
+      <AppSection title="Popular" items={popularDeduped as any} basePath="apk" />
     </div>
   );
 }
