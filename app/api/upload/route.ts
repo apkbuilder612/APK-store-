@@ -48,6 +48,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const {
       filePath,
+      iconPath,
       name: appName,
       shortName,
       description,
@@ -97,8 +98,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: validation.reason }, { status: 400 });
     }
 
+    let iconUrl: string | null = null;
+    if (iconPath) {
+      const { data: publicIcon } = admin.storage.from("icons").getPublicUrl(iconPath);
+      iconUrl = publicIcon?.publicUrl ?? null;
+    }
+
     const slug = String(appName).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
+    // Matching an existing app by developer + slug is how "updating" an
+    // app works: publish again using the exact same App name, and this
+    // reuses the same app entry instead of creating a duplicate — the new
+    // version becomes the latest.
     let { data: apk } = await admin
       .from("apks")
       .select("id")
@@ -117,7 +128,8 @@ export async function POST(request: NextRequest) {
           description: description || null,
           category_id: categoryId || null,
           min_android_version: minAndroidVersion || null,
-          status: "pending",
+          icon_url: iconUrl,
+          status: "approved",
         })
         .select("id")
         .single();
@@ -129,6 +141,9 @@ export async function POST(request: NextRequest) {
         );
       }
       apk = newApk;
+    } else if (iconUrl) {
+      // Updating an existing app with a new icon
+      await admin.from("apks").update({ icon_url: iconUrl }).eq("id", apk.id);
     }
 
     const { data: existingHash } = await admin
@@ -175,19 +190,19 @@ export async function POST(request: NextRequest) {
 
     await admin
       .from("apks")
-      .update({ latest_version_id: newVersion.id, updated_at: new Date().toISOString() })
+      .update({
+        latest_version_id: newVersion.id,
+        status: "approved",
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", apk.id);
 
     return NextResponse.json({ success: true, apkId: apk.id, versionId: newVersion.id });
   } catch (err: any) {
-    // Catch-all so the client always gets valid JSON back, even if
-    // something above throws unexpectedly (e.g. a timeout, a bad
-    // response from Storage, or a bug) — this is what was causing
-    // "Unexpected end of JSON input" on the client.
     console.error("Upload route crashed:", err);
     return NextResponse.json(
       { error: `Server error: ${err?.message ?? "unknown error"}` },
       { status: 500 }
     );
   }
-      }
+                             }
