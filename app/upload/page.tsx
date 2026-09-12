@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { UploadCloud, Loader2, CheckCircle2 } from "lucide-react";
+import { UploadCloud, Loader2, CheckCircle2, Image as ImageIcon } from "lucide-react";
 import { formatBytes } from "@/lib/format";
 
 interface Category {
@@ -25,6 +25,8 @@ export default function UploadPage() {
   const [categories, setCategories] = useState<Category[]>([]);
 
   const [file, setFile] = useState<File | null>(null);
+  const [icon, setIcon] = useState<File | null>(null);
+  const [iconPreview, setIconPreview] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [shortName, setShortName] = useState("");
   const [description, setDescription] = useState("");
@@ -36,7 +38,7 @@ export default function UploadPage() {
 
   const [status, setStatus] = useState<"idle" | "submitting" | "done" | "error">("idle");
   const [progress, setProgress] = useState(0);
-  const [phase, setPhase] = useState<"upload" | "process">("upload");
+  const [phase, setPhase] = useState<"icon" | "upload" | "process">("upload");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -92,48 +94,55 @@ export default function UploadPage() {
     setDeveloperId(dev.id);
   }
 
-  // Uploads the raw APK straight to Supabase Storage from the browser,
-  // bypassing our own server entirely for the large binary (Vercel's
-  // function body-size cap doesn't apply to this request since it never
-  // touches our server). Returns the storage path on success.
-  function uploadFileDirectToStorage(
+  function handleIconChange(f: File | null) {
+    setIcon(f);
+    if (f) {
+      setIconPreview(URL.createObjectURL(f));
+    } else {
+      setIconPreview(null);
+    }
+  }
+
+  // Shared helper: uploads any file straight to a Supabase Storage bucket
+  // from the browser (bypasses Vercel's function body-size limit) with
+  // upload-progress reporting.
+  function uploadDirectToStorage(
     theFile: File,
+    bucket: string,
     userId: string,
-    accessToken: string
+    accessToken: string,
+    contentType: string,
+    onProgress: (pct: number) => void
   ): Promise<string> {
     return new Promise((resolve, reject) => {
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
       const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+      const ext = theFile.name.split(".").pop() || "bin";
       const filePath = `${userId}/uploads/${Date.now()}-${Math.random()
         .toString(36)
-        .slice(2)}.apk`;
+        .slice(2)}.${ext}`;
 
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", `${supabaseUrl}/storage/v1/object/apk-files/${filePath}`);
+      xhr.open("POST", `${supabaseUrl}/storage/v1/object/${bucket}/${filePath}`);
       xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
       xhr.setRequestHeader("apikey", anonKey);
-      xhr.setRequestHeader("Content-Type", "application/vnd.android.package-archive");
+      xhr.setRequestHeader("Content-Type", contentType);
 
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) {
-          // Uploading to storage is 0-85%; the remaining 15% covers the
-          // server downloading it back down to validate + write DB rows.
-          setPhase("upload");
-          setProgress(Math.round((event.loaded / event.total) * 85));
+          onProgress(Math.round((event.loaded / event.total) * 100));
         }
       };
 
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
-          setPhase("process");
-          setProgress(90);
           resolve(filePath);
         } else {
-          reject(new Error("Could not upload file to storage."));
+          reject(new Error(`Could not upload to ${bucket}.`));
         }
       };
 
-      xhr.onerror = () => reject(new Error("Network error during file upload."));
+      xhr.onerror = () => reject(new Error("Network error during upload."));
       xhr.send(theFile);
     });
   }
@@ -145,7 +154,6 @@ export default function UploadPage() {
       return;
     }
     setStatus("submitting");
-    setPhase("upload");
     setProgress(1);
     setError(null);
 
@@ -163,13 +171,55 @@ export default function UploadPage() {
         return;
       }
 
-      const filePath = await uploadFileDirectToStorage(file, user.id, session.access_token);
+      let iconPath: string | null = null;
+      if (icon) {
+        setPhase("icon");
+        iconPath = await uploadDirectToStorage(
+          icon,
+          "icons",
+          user.id,
+          session.access_token,
+          icon.type || "image/png",
+          (pct) => setProgress(Math.round(pct * 0.15)) // icon = first 15%
+        );
+      }
+
+      setPhase("upload");
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+      const filePath = `${user.id}/uploads/${Date.now()}-${Math.random().toString(36).slice(2)}.apk`;
+
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `${supabaseUrl}/storage/v1/object/apk-files/${filePath}`);
+        xhr.setRequestHeader("Authorization", `Bearer ${session.access_token}`);
+        xhr.setRequestHeader("apikey", anonKey);
+        xhr.setRequestHeader("Content-Type", "application/vnd.android.package-archive");
+
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const base = icon ? 15 : 0;
+            const span = icon ? 70 : 85;
+            setProgress(base + Math.round((event.loaded / event.total) * span));
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error("Could not upload APK file."));
+        };
+        xhr.onerror = () => reject(new Error("Network error during file upload."));
+        xhr.send(file);
+      });
+
+      setPhase("process");
+      setProgress(90);
 
       const res = await fetch("/api/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           filePath,
+          iconPath,
           name,
           shortName,
           description,
@@ -222,9 +272,9 @@ export default function UploadPage() {
     return (
       <div className="px-6 pt-16 text-center">
         <CheckCircle2 size={36} className="mx-auto text-emerald-500 mb-3" />
-        <h1 className="text-lg font-semibold mb-1">Submitted for review</h1>
+        <h1 className="text-lg font-semibold mb-1">Published</h1>
         <p className="text-sm text-neutral-500">
-          Your app will appear in the store once an admin approves it.
+          Your app is now live in the store.
         </p>
       </div>
     );
@@ -232,8 +282,34 @@ export default function UploadPage() {
 
   return (
     <div className="px-4 pt-6 pb-10">
-      <h1 className="text-xl font-bold mb-4">Upload APK</h1>
+      <h1 className="text-xl font-bold mb-1">Upload APK</h1>
+      <p className="text-xs text-neutral-500 mb-4">
+        To update an existing app later, use the exact same App name and a higher version number.
+      </p>
       <form onSubmit={handleSubmit} className="space-y-3">
+        <div className="flex gap-3 items-center">
+          <label className="shrink-0 h-16 w-16 rounded-2xl border-2 border-dashed border-black/10 dark:border-white/15 flex items-center justify-center overflow-hidden bg-neutral-50 dark:bg-neutral-900">
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              disabled={status === "submitting"}
+              onChange={(e) => handleIconChange(e.target.files?.[0] ?? null)}
+            />
+            {iconPreview ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={iconPreview} alt="Icon preview" className="h-full w-full object-cover" />
+            ) : (
+              <ImageIcon size={22} className="text-neutral-400" />
+            )}
+          </label>
+          <div className="text-xs text-neutral-500">
+            App icon (optional)
+            <br />
+            Square image works best
+          </div>
+        </div>
+
         <label className="block rounded-2xl border-2 border-dashed border-black/10 dark:border-white/15 p-5 text-center">
           <input
             type="file"
@@ -290,7 +366,7 @@ export default function UploadPage() {
               />
             </div>
             <p className="text-xs text-neutral-500 text-center">
-              {phase === "upload" ? `Uploading... ${progress}%` : `Processing... ${progress}%`}
+              {phase === "icon" ? `Uploading icon... ${progress}%` : phase === "upload" ? `Uploading APK... ${progress}%` : `Processing... ${progress}%`}
             </p>
           </div>
         )}
@@ -301,7 +377,7 @@ export default function UploadPage() {
           className="w-full flex items-center justify-center gap-2 rounded-2xl bg-brand-600 text-white font-semibold py-3 disabled:opacity-70"
         >
           {status === "submitting" && <Loader2 size={18} className="animate-spin" />}
-          {status === "submitting" ? `${progress}%` : "Submit for review"}
+          {status === "submitting" ? `${progress}%` : "Submit"}
         </button>
       </form>
     </div>
@@ -380,4 +456,4 @@ function Select({
       </select>
     </label>
   );
-            }
+        }
