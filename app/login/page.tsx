@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { Loader2 } from "lucide-react";
@@ -12,6 +12,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClient();
 
   async function handleSubmit(e: React.FormEvent) {
@@ -20,7 +21,6 @@ export default function LoginPage() {
     setLoading(true);
 
     let email = identifier;
-    // Allow logging in with a username by resolving it to an email first.
     if (!identifier.includes("@")) {
       const { data } = await supabase
         .from("profiles")
@@ -42,7 +42,8 @@ export default function LoginPage() {
       setError("Incorrect email/username or password.");
       return;
     }
-    router.push("/");
+    const redirect = searchParams.get("redirect") || "/";
+    router.push(redirect);
     router.refresh();
   }
 
