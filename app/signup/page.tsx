@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { Loader2 } from "lucide-react";
@@ -14,6 +14,7 @@ export default function SignupPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClient();
 
   async function handleSubmit(e: React.FormEvent) {
@@ -45,7 +46,8 @@ export default function SignupPage() {
       setError(signUpError.message);
       return;
     }
-    router.push("/");
+    const redirect = searchParams.get("redirect") || "/";
+    router.push(redirect);
     router.refresh();
   }
 
