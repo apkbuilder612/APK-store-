@@ -70,8 +70,6 @@ export default function SubmitPwaPage() {
 
       if (prefillName) {
         setName(prefillName);
-        // Load existing values so editing doesn't wipe fields the user
-        // isn't touching this time (e.g. description, existing URL).
         const { data: existing } = await supabase
           .from("pwas")
           .select("short_name, description, website_url, version, category_id")
@@ -92,29 +90,6 @@ export default function SubmitPwaPage() {
       setChecking(false);
     })();
   }, []);
-
-  async function becomeDeveloper() {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-    const devName = prompt("Developer / company / group name:");
-    if (!devName) return;
-    const slug = devName.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
-    const { data: dev, error: devError } = await supabase
-      .from("developers")
-      .insert({ owner_id: user.id, name: devName, slug })
-      .select("id, name")
-      .single();
-    if (devError) {
-      alert(devError.message);
-      return;
-    }
-    await supabase.from("profiles").update({ is_developer: true }).eq("id", user.id);
-    setIsDeveloper(true);
-    setDevelopers((d) => [...d, dev]);
-    setDeveloperId(dev.id);
-  }
 
   function handleIconChange(f: File | null) {
     setIcon(f);
@@ -195,16 +170,10 @@ export default function SubmitPwaPage() {
     return (
       <div className="px-6 pt-16 text-center">
         <Globe size={36} className="mx-auto text-neutral-400 mb-3" />
-        <h1 className="text-lg font-semibold mb-1">Become a developer</h1>
-        <p className="text-sm text-neutral-500 mb-5">
-          Create a developer profile to publish PWAs to the store.
+        <h1 className="text-lg font-semibold mb-1">Not available</h1>
+        <p className="text-sm text-neutral-500">
+          This account doesn't have upload access.
         </p>
-        <button
-          onClick={becomeDeveloper}
-          className="rounded-2xl bg-brand-600 text-white font-semibold px-5 py-3"
-        >
-          Set up developer profile
-        </button>
       </div>
     );
   }
@@ -361,4 +330,4 @@ function Select({
       </select>
     </label>
   );
-          }
+     }
