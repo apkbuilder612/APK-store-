@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { SearchBar } from "@/components/search-bar";
 import { AppSection } from "@/components/app-section";
+import { createClient } from "@/lib/supabase/server";
 import {
   getFeaturedApks,
   getRecentlyAddedApks,
@@ -12,6 +13,21 @@ import {
 export const revalidate = 60;
 
 export default async function HomePage() {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  let isDeveloper = false;
+  if (user) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("is_developer")
+      .eq("id", user.id)
+      .single();
+    isDeveloper = !!profile?.is_developer;
+  }
+
   const [featured, recentlyAdded, recentlyUpdated, popular, categories] = await Promise.all([
     getFeaturedApks(),
     getRecentlyAddedApks(),
@@ -23,10 +39,6 @@ export default async function HomePage() {
   const hasAnything =
     featured.length + recentlyAdded.length + recentlyUpdated.length + popular.length > 0;
 
-  // Same app can qualify for more than one section (e.g. the only app in
-  // the store is trivially "featured", "recently added" and "recently
-  // updated" at once). Show each app only once, in its highest-priority
-  // section, like a real store would.
   const seen = new Set<string>();
   function dedupe(items: any[]) {
     return items.filter((item: any) => {
@@ -45,9 +57,11 @@ export default async function HomePage() {
     <div className="px-4 pt-4 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold">APK Store</h1>
-        <Link href="/upload" className="text-sm font-medium text-brand-600">
-          + Upload
-        </Link>
+        {isDeveloper && (
+          <Link href="/upload" className="text-sm font-medium text-brand-600">
+            + Upload
+          </Link>
+        )}
       </div>
 
       <SearchBar />
@@ -69,10 +83,16 @@ export default async function HomePage() {
       {!hasAnything && (
         <div className="text-center py-16 text-neutral-400">
           <p className="font-medium">No apps yet</p>
-          <p className="text-sm mt-1">Be the first developer to publish one.</p>
-          <Link href="/upload" className="inline-block mt-4 text-sm text-brand-600 font-medium">
-            Upload an APK →
-          </Link>
+          {isDeveloper ? (
+            <>
+              <p className="text-sm mt-1">Be the first developer to publish one.</p>
+              <Link href="/upload" className="inline-block mt-4 text-sm text-brand-600 font-medium">
+                Upload an APK →
+              </Link>
+            </>
+          ) : (
+            <p className="text-sm mt-1">Check back soon.</p>
+          )}
         </div>
       )}
 
