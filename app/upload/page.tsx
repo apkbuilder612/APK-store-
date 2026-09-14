@@ -16,6 +16,14 @@ interface DeveloperProfile {
 }
 
 export default function UploadPage() {
+  return (
+    <Suspense fallback={null}>
+      <UploadPageInner />
+    </Suspense>
+  );
+}
+
+function UploadPageInner() {
   const supabase = createClient();
   const router = useRouter();
   const searchParams = useSearchParams();
