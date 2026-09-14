@@ -4,7 +4,9 @@ import { getApkBySlug } from "@/lib/data/apks";
 import { formatBytes, formatDownloadCount, timeAgo } from "@/lib/format";
 import { DownloadButton } from "@/components/download-button";
 import { ShareButton, FavoriteButton } from "@/components/detail-actions";
-import { ShieldCheck } from "lucide-react";
+import { BackButton } from "@/components/back-button";
+import { ReviewSection } from "@/components/review-section";
+import { ShieldCheck, Star } from "lucide-react";
 
 export const revalidate = 60;
 
@@ -18,7 +20,9 @@ export default async function ApkDetailsPage({ params }: { params: { slug: strin
 
   return (
     <div className="pb-6">
-      <div className="px-4 pt-5 flex gap-4">
+      <BackButton label="APK" />
+
+      <div className="px-4 pt-1 flex gap-4">
         <div className="relative h-20 w-20 shrink-0 rounded-xl2 overflow-hidden bg-neutral-100 dark:bg-neutral-800">
           {apk.icon_url ? (
             <Image src={apk.icon_url} alt={apk.name} fill sizes="80px" className="object-cover" />
@@ -34,6 +38,12 @@ export default async function ApkDetailsPage({ params }: { params: { slug: strin
           <div className="flex items-center gap-2 mt-1 text-xs text-neutral-400">
             {apk.category?.name && <span>{apk.category.name}</span>}
             <span>· {formatDownloadCount(apk.download_count)} downloads</span>
+            {apk.rating_count > 0 && (
+              <span className="flex items-center gap-0.5">
+                <Star size={11} className="fill-amber-400 text-amber-400" />
+                {apk.avg_rating} ({apk.rating_count})
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -102,6 +112,8 @@ export default async function ApkDetailsPage({ params }: { params: { slug: strin
           </ul>
         </div>
       )}
+
+      <ReviewSection apkId={apk.id} avgRating={apk.avg_rating} ratingCount={apk.rating_count} />
     </div>
   );
 }
@@ -113,4 +125,4 @@ function InfoRow({ label, value, mono }: { label: string; value: string; mono?: 
       <p className={`font-medium truncate ${mono ? "font-mono text-xs" : "text-sm"}`}>{value}</p>
     </div>
   );
-}
+      }
