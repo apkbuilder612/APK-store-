@@ -1,13 +1,7 @@
-const APK_SELECT = `
-  id, slug, name, short_name, icon_url, download_count, created_at, updated_at, avg_rating, rating_count,
-  developer:developers(name),
-  category:categories(name),
-  latest_version:apk_versions!apks_latest_version_fk(version, file_size_bytes)
-`;
 import { createClient } from "@/lib/supabase/server";
 
 const APK_SELECT = `
-  id, slug, name, short_name, icon_url, download_count, created_at, updated_at,
+  id, slug, name, short_name, icon_url, download_count, created_at, updated_at, avg_rating, rating_count,
   developer:developers(name),
   category:categories(name),
   latest_version:apk_versions!apks_latest_version_fk(version, file_size_bytes)
