@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Globe, Loader2, CheckCircle2, Image as ImageIcon } from "lucide-react";
@@ -15,6 +15,14 @@ interface DeveloperProfile {
 }
 
 export default function SubmitPwaPage() {
+  return (
+    <Suspense fallback={null}>
+      <SubmitPwaPageInner />
+    </Suspense>
+  );
+}
+
+function SubmitPwaPageInner() {
   const supabase = createClient();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -330,4 +338,4 @@ function Select({
       </select>
     </label>
   );
-     }
+        }
