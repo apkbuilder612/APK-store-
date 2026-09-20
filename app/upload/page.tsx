@@ -3,7 +3,7 @@
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { UploadCloud, Loader2, CheckCircle2, Image as ImageIcon } from "lucide-react";
+import { UploadCloud, Loader2, CheckCircle2, Image as ImageIcon, X } from "lucide-react";
 import { formatBytes } from "@/lib/format";
 
 interface Category {
@@ -39,6 +39,9 @@ function UploadPageInner() {
   const [file, setFile] = useState<File | null>(null);
   const [icon, setIcon] = useState<File | null>(null);
   const [iconPreview, setIconPreview] = useState<string | null>(null);
+  const [screenshots, setScreenshots] = useState<File[]>([]);
+  const [screenshotPreviews, setScreenshotPreviews] = useState<string[]>([]);
+  const [videoUrl, setVideoUrl] = useState("");
   const [name, setName] = useState("");
   const [shortName, setShortName] = useState("");
   const [description, setDescription] = useState("");
@@ -50,8 +53,9 @@ function UploadPageInner() {
 
   const [status, setStatus] = useState<"idle" | "submitting" | "done" | "error">("idle");
   const [progress, setProgress] = useState(0);
-  const [phase, setPhase] = useState<"icon" | "upload" | "process">("upload");
+  const [phase, setPhase] = useState<"icon" | "screenshots" | "upload" | "process">("upload");
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -95,6 +99,49 @@ function UploadPageInner() {
     setIconPreview(f ? URL.createObjectURL(f) : null);
   }
 
+  function handleScreenshotsChange(files: FileList | null) {
+    if (!files) return;
+    const arr = Array.from(files).slice(0, 8); // cap at 8 screenshots
+    setScreenshots(arr);
+    setScreenshotPreviews(arr.map((f) => URL.createObjectURL(f)));
+  }
+
+  function removeScreenshot(index: number) {
+    setScreenshots((prev) => prev.filter((_, i) => i !== index));
+    setScreenshotPreviews((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  async function uploadToStorage(
+    theFile: File,
+    bucket: string,
+    userId: string,
+    accessToken: string,
+    onProgress?: (pct: number) => void
+  ): Promise<string> {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    const ext = theFile.name.split(".").pop() || "png";
+    const path = `${userId}/uploads/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `${supabaseUrl}/storage/v1/object/${bucket}/${path}`);
+      xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+      xhr.setRequestHeader("apikey", anonKey);
+      xhr.setRequestHeader("Content-Type", theFile.type || "application/octet-stream");
+      if (onProgress) {
+        xhr.upload.onprogress = (ev) => {
+          if (ev.lengthComputable) onProgress(Math.round((ev.loaded / ev.total) * 100));
+        };
+      }
+      xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`Could not upload to ${bucket}.`)));
+      xhr.onerror = () => reject(new Error("Network error during upload."));
+      xhr.send(theFile);
+    });
+
+    return path;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!file) {
@@ -104,6 +151,7 @@ function UploadPageInner() {
     setStatus("submitting");
     setProgress(1);
     setError(null);
+    setWarning(null);
 
     try {
       const {
@@ -119,31 +167,27 @@ function UploadPageInner() {
         return;
       }
 
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
       let iconPath: string | null = null;
       if (icon) {
         setPhase("icon");
-        const iconExt = icon.name.split(".").pop() || "png";
-        const iconFilePath = `${user.id}/uploads/${Date.now()}-${Math.random().toString(36).slice(2)}.${iconExt}`;
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open("POST", `${supabaseUrl}/storage/v1/object/icons/${iconFilePath}`);
-          xhr.setRequestHeader("Authorization", `Bearer ${session.access_token}`);
-          xhr.setRequestHeader("apikey", anonKey);
-          xhr.setRequestHeader("Content-Type", icon.type || "image/png");
-          xhr.upload.onprogress = (ev) => {
-            if (ev.lengthComputable) setProgress(Math.round((ev.loaded / ev.total) * 15));
-          };
-          xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error("Icon upload failed.")));
-          xhr.onerror = () => reject(new Error("Network error uploading icon."));
-          xhr.send(icon);
-        });
-        iconPath = iconFilePath;
+        iconPath = await uploadToStorage(icon, "icons", user.id, session.access_token, (pct) =>
+          setProgress(Math.round(pct * 0.1))
+        );
+      }
+
+      const screenshotPaths: string[] = [];
+      if (screenshots.length > 0) {
+        setPhase("screenshots");
+        for (let i = 0; i < screenshots.length; i++) {
+          const path = await uploadToStorage(screenshots[i], "screenshots", user.id, session.access_token);
+          screenshotPaths.push(path);
+          setProgress(10 + Math.round(((i + 1) / screenshots.length) * 15));
+        }
       }
 
       setPhase("upload");
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
       const filePath = `${user.id}/uploads/${Date.now()}-${Math.random().toString(36).slice(2)}.apk`;
 
       await new Promise<void>((resolve, reject) => {
@@ -154,8 +198,8 @@ function UploadPageInner() {
         xhr.setRequestHeader("Content-Type", "application/vnd.android.package-archive");
         xhr.upload.onprogress = (ev) => {
           if (ev.lengthComputable) {
-            const base = icon ? 15 : 0;
-            const span = icon ? 70 : 85;
+            const base = 25;
+            const span = 65;
             setProgress(base + Math.round((ev.loaded / ev.total) * span));
           }
         };
@@ -165,7 +209,7 @@ function UploadPageInner() {
       });
 
       setPhase("process");
-      setProgress(90);
+      setProgress(92);
 
       const res = await fetch("/api/upload", {
         method: "POST",
@@ -173,6 +217,8 @@ function UploadPageInner() {
         body: JSON.stringify({
           filePath,
           iconPath,
+          screenshotPaths,
+          videoUrl: videoUrl.trim() || null,
           name,
           shortName,
           description,
@@ -192,6 +238,13 @@ function UploadPageInner() {
         setStatus("error");
         return;
       }
+
+      if (json.scanStatus === "suspicious") {
+        setWarning("This file was flagged by some security vendors as suspicious. It's published, but review it carefully.");
+      } else if (json.scanStatus === "error") {
+        setWarning("Malware scan could not run (scanner unavailable). The app was published without a scan result.");
+      }
+
       setStatus("done");
     } catch (err: any) {
       setError(err?.message ?? "Upload failed.");
@@ -208,9 +261,7 @@ function UploadPageInner() {
       <div className="px-6 pt-16 text-center">
         <UploadCloud size={36} className="mx-auto text-neutral-400 mb-3" />
         <h1 className="text-lg font-semibold mb-1">Not available</h1>
-        <p className="text-sm text-neutral-500">
-          This account doesn't have upload access.
-        </p>
+        <p className="text-sm text-neutral-500">This account doesn't have upload access.</p>
       </div>
     );
   }
@@ -222,7 +273,12 @@ function UploadPageInner() {
         <h1 className="text-lg font-semibold mb-1">
           {isNewVersionMode ? "Version published" : "Published"}
         </h1>
-        <p className="text-sm text-neutral-500">Your app is now live in the store.</p>
+        <p className="text-sm text-neutral-500 mb-2">Your app is now live in the store.</p>
+        {warning && (
+          <p className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 rounded-lg px-3 py-2 inline-block">
+            {warning}
+          </p>
+        )}
       </div>
     );
   }
@@ -277,6 +333,50 @@ function UploadPageInner() {
           )}
         </label>
 
+        {!isNewVersionMode && (
+          <div>
+            <span className="text-xs font-medium text-neutral-500">Screenshots (optional, up to 8)</span>
+            <label className="mt-1 block rounded-2xl border-2 border-dashed border-black/10 dark:border-white/15 p-4 text-center">
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                disabled={status === "submitting"}
+                onChange={(e) => handleScreenshotsChange(e.target.files)}
+              />
+              <ImageIcon size={20} className="mx-auto text-neutral-400 mb-1" />
+              <p className="text-xs text-neutral-500">Tap to choose screenshots</p>
+            </label>
+            {screenshotPreviews.length > 0 && (
+              <div className="flex gap-2 mt-2 overflow-x-auto no-scrollbar">
+                {screenshotPreviews.map((src, i) => (
+                  <div key={i} className="relative h-20 w-20 shrink-0 rounded-lg overflow-hidden">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={src} alt="" className="h-full w-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => removeScreenshot(i)}
+                      className="absolute top-0.5 right-0.5 bg-black/60 rounded-full p-0.5"
+                    >
+                      <X size={12} className="text-white" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!isNewVersionMode && (
+          <Field
+            label="Video preview URL (optional — YouTube or .mp4 link)"
+            value={videoUrl}
+            onChange={setVideoUrl}
+            disabled={status === "submitting"}
+          />
+        )}
+
         {developers.length > 1 && !isNewVersionMode && (
           <Select label="Publish as" value={developerId} onChange={setDeveloperId}>
             {developers.map((d) => (
@@ -329,7 +429,13 @@ function UploadPageInner() {
               />
             </div>
             <p className="text-xs text-neutral-500 text-center">
-              {phase === "icon" ? `Uploading icon... ${progress}%` : phase === "upload" ? `Uploading APK... ${progress}%` : `Processing... ${progress}%`}
+              {phase === "icon"
+                ? `Uploading icon... ${progress}%`
+                : phase === "screenshots"
+                ? `Uploading screenshots... ${progress}%`
+                : phase === "upload"
+                ? `Uploading APK... ${progress}%`
+                : `Scanning & processing... ${progress}%`}
             </p>
           </div>
         )}
@@ -419,4 +525,4 @@ function Select({
       </select>
     </label>
   );
-        }
+                                             }
