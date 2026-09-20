@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Package, Globe, User } from "lucide-react";
+import { LayoutGrid, Package, Globe, User } from "lucide-react";
 import clsx from "clsx";
 
 const TABS = [
-  { href: "/", label: "APK", icon: Package },
+  { href: "/", label: "All", icon: LayoutGrid },
+  { href: "/apk", label: "APK", icon: Package },
   { href: "/pwa", label: "PWA", icon: Globe },
   { href: "/profile", label: "Profile", icon: User },
 ];
