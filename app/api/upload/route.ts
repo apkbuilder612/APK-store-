@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server";
 import { validateApkBuffer } from "@/lib/apk-validation";
+import { checkHashWithVirusTotal } from "@/lib/virustotal";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -49,6 +50,8 @@ export async function POST(request: NextRequest) {
     const {
       filePath,
       iconPath,
+      screenshotPaths,
+      videoUrl,
       name: appName,
       shortName,
       description,
@@ -98,6 +101,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: validation.reason }, { status: 400 });
     }
 
+    // Malware check: look up this exact file's hash against VirusTotal.
+    // If 3+ security vendors flag it as malicious, we refuse to publish it.
+    const scan = await checkHashWithVirusTotal(validation.sha256);
+    if (scan.status === "malicious") {
+      await admin.storage.from("apk-files").remove([filePath]);
+      return NextResponse.json(
+        {
+          error: `This file was flagged as malicious by ${scan.positives} security vendor(s) and cannot be published.`,
+        },
+        { status: 400 }
+      );
+    }
+
     let iconUrl: string | null = null;
     if (iconPath) {
       const { data: publicIcon } = admin.storage.from("icons").getPublicUrl(iconPath);
@@ -106,10 +122,6 @@ export async function POST(request: NextRequest) {
 
     const slug = String(appName).toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
-    // Matching an existing app by developer + slug is how "updating" an
-    // app works: publish again using the exact same App name, and this
-    // reuses the same app entry instead of creating a duplicate — the new
-    // version becomes the latest.
     let { data: apk } = await admin
       .from("apks")
       .select("id")
@@ -129,6 +141,7 @@ export async function POST(request: NextRequest) {
           category_id: categoryId || null,
           min_android_version: minAndroidVersion || null,
           icon_url: iconUrl,
+          video_url: videoUrl || null,
           status: "approved",
         })
         .select("id")
@@ -141,9 +154,13 @@ export async function POST(request: NextRequest) {
         );
       }
       apk = newApk;
-    } else if (iconUrl) {
-      // Updating an existing app with a new icon
-      await admin.from("apks").update({ icon_url: iconUrl }).eq("id", apk.id);
+    } else {
+      const updates: Record<string, any> = {};
+      if (iconUrl) updates.icon_url = iconUrl;
+      if (videoUrl) updates.video_url = videoUrl;
+      if (Object.keys(updates).length > 0) {
+        await admin.from("apks").update(updates).eq("id", apk.id);
+      }
     }
 
     const { data: existingHash } = await admin
@@ -172,6 +189,11 @@ export async function POST(request: NextRequest) {
         sha256_hash: validation.sha256,
         changelog: changelog || null,
         is_latest: true,
+        scan_status: scan.status,
+        scan_positives: scan.positives,
+        scan_total: scan.total,
+        scan_checked_at: new Date().toISOString(),
+        virustotal_link: scan.link,
       })
       .select("id")
       .single();
@@ -190,14 +212,24 @@ export async function POST(request: NextRequest) {
 
     await admin
       .from("apks")
-      .update({
-        latest_version_id: newVersion.id,
-        status: "approved",
-        updated_at: new Date().toISOString(),
-      })
+      .update({ latest_version_id: newVersion.id, updated_at: new Date().toISOString() })
       .eq("id", apk.id);
 
-    return NextResponse.json({ success: true, apkId: apk.id, versionId: newVersion.id });
+    // Screenshots (optional, multiple)
+    if (Array.isArray(screenshotPaths) && screenshotPaths.length > 0) {
+      const rows = screenshotPaths.map((path: string, i: number) => {
+        const { data: pub } = admin.storage.from("screenshots").getPublicUrl(path);
+        return { apk_id: apk!.id, url: pub?.publicUrl ?? "", position: i };
+      });
+      await admin.from("apk_screenshots").insert(rows);
+    }
+
+    return NextResponse.json({
+      success: true,
+      apkId: apk.id,
+      versionId: newVersion.id,
+      scanStatus: scan.status,
+    });
   } catch (err: any) {
     console.error("Upload route crashed:", err);
     return NextResponse.json(
@@ -205,4 +237,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-                             }
+  }
