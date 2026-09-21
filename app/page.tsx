@@ -1,4 +1,4 @@
-import { AppCard } from "@/components/app-card";
+import { GridAppCard } from "@/components/grid-app-card";
 import { SearchBar } from "@/components/search-bar";
 import { getCombinedRecent } from "@/lib/data/combined";
 
@@ -14,15 +14,15 @@ export default async function AllPage() {
       <SearchBar />
 
       {items.length === 0 && (
-        <div className="text-center py-16 text-neutral-400">
+        <div className="text-center py-16 text-ink/40 dark:text-cream/40">
           <p className="font-medium">Nothing here yet</p>
           <p className="text-sm mt-1">Check back soon.</p>
         </div>
       )}
 
-      <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-3">
         {items.map((item) => (
-          <AppCard
+          <GridAppCard
             key={`${item.kind}-${item.id}`}
             kind={item.kind}
             href={`/${item.kind}/${item.slug}`}
@@ -31,7 +31,6 @@ export default async function AllPage() {
             iconUrl={item.icon_url}
             version={item.version}
             sizeBytes={item.sizeBytes ?? undefined}
-            category={item.category ?? undefined}
             downloadCount={item.downloadCount ?? undefined}
           />
         ))}
