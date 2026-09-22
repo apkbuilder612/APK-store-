@@ -6,17 +6,25 @@ import { OfflineBanner } from "@/components/offline-banner";
 
 export const metadata: Metadata = {
   title: "APK Store",
-  description: "APK and PWA marketplace",
+  description:
+    "APK Store — an APK and PWA marketplace created and maintained by Khaalid Cabdullaahi Maxamuud.",
   manifest: "/manifest.json",
+  authors: [{ name: "Khaalid Cabdullaahi Maxamuud" }],
+  creator: "Khaalid Cabdullaahi Maxamuud",
+  publisher: "Khaalid Cabdullaahi Maxamuud",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
     title: "APK Store",
   },
+  other: {
+    "app-owner": "Khaalid Cabdullaahi Maxamuud",
+    "app-creator": "Khaalid Cabdullaahi Maxamuud",
+  },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#2563eb",
+  themeColor: "#218DAE",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
