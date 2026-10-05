@@ -2,34 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: light dark;
-}
-
-html, body {
-  @apply bg-cream text-ink dark:bg-ink dark:text-cream;
-}
+:root { color-scheme: dark; }
+html, body { @apply bg-bg text-white; }
 
 .skeleton {
-  @apply bg-brand-100 dark:bg-ink-700 rounded-lg animate-shimmer;
-  background-image: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0) 0,
-    rgba(255, 255, 255, 0.35) 50%,
-    rgba(255, 255, 255, 0) 100%
-  );
+  @apply bg-bg-soft rounded-lg animate-shimmer;
+  background-image: linear-gradient(90deg, rgba(255,255,255,0) 0, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0) 100%);
   background-size: 400px 100%;
   background-repeat: no-repeat;
 }
-
-.safe-bottom {
-  padding-bottom: env(safe-area-inset-bottom);
-}
-
-.no-scrollbar {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
-}
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
